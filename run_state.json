@@ -5,5 +5,7 @@
   "total_terms": 0,
   "overall_progress": 0,
   "overall_total": 0,
+  "batch_total": 0,
+  "batch_fill": 0,
   "workers": {}
 }
