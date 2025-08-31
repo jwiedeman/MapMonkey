@@ -120,10 +120,13 @@
       }
     }
 
-    loadState();
-    loadDb();
-    setInterval(loadState, 5000);
-    setInterval(loadDb, 10000);
+    function refreshAll() {
+      loadState();
+      loadDb();
+    }
+
+    refreshAll();
+    setInterval(refreshAll, 1000);
   </script>
 </body>
 </html>
