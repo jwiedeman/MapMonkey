@@ -7,7 +7,7 @@ import json
 from typing import Sequence, Set, Tuple
 
 from playwright.async_api import async_playwright
-from db import init_db, save_business_batch, get_dsn, close_db, load_business_keys
+from db import init_db, save_business, get_dsn, close_db, load_business_keys
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ async def scrape_at_location(
         counted = current
 
     _update_batch_state(0, total)
-    to_save: list[tuple] = []
+    saved_count = 0
     for listing in listings:
         await listing.click()
         await page.wait_for_timeout(3000)
@@ -112,25 +112,26 @@ async def scrape_at_location(
             logger.debug("Already saved: %s | %s", name, address)
             continue
 
-        seen.add(key)
-        logger.info("%sSaving new listing: %s | %s%s", GREEN_ON_BLACK, name, address, RESET)
-        to_save.append(
-            (
-                name,
-                address,
-                website,
-                phone,
-                reviews_average,
-                query,
-                lat_val,
-                lon_val,
-            )
+        values = (
+            name,
+            address,
+            website,
+            phone,
+            reviews_average,
+            query,
+            lat_val,
+            lon_val,
         )
-        _update_batch_state(len(to_save), total)
-    if to_save:
-        with conn:
-            save_business_batch(conn, to_save)
-        _update_batch_state(0, total)
+        try:
+            save_business(conn, values)
+        except Exception as exc:
+            logger.error("Error saving listing %s | %s: %s", name, address, exc)
+            continue
+        seen.add(key)
+        saved_count += 1
+        logger.info("%sSaving new listing: %s | %s%s", GREEN_ON_BLACK, name, address, RESET)
+        _update_batch_state(saved_count, total)
+    _update_batch_state(0, total)
 
 
 async def scrape_city_grid(
