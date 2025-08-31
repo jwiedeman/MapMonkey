@@ -222,7 +222,7 @@ if __name__ == "__main__":
             browser = await p.chromium.launch(headless=args.headless)
             page = await browser.new_page()
             for term in queries:
-                search = f"{args.city} {term}".strip()
+                search = f"\"{args.city}\" {term}".strip()
                 await scrape_city_grid(
                     args.city,
                     search,
