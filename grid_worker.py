@@ -8,7 +8,7 @@ from typing import Sequence, Set, Tuple
 # Cache geocoding results to avoid repeated requests
 _geocode_cache: dict[str, tuple[float, float]] = {}
 from playwright.async_api import async_playwright
-from db import init_db, save_business, get_dsn, close_db, load_business_keys
+from db import init_db, save_business_batch, get_dsn, close_db, load_business_keys
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -48,6 +48,7 @@ async def scrape_at_location(
             break
         counted = current
 
+    to_save: list[tuple] = []
     for listing in listings:
         await listing.click()
         await page.wait_for_timeout(3000)
@@ -95,8 +96,7 @@ async def scrape_at_location(
 
         seen.add(key)
         logger.info("%sSaving new listing: %s | %s%s", GREEN_ON_BLACK, name, address, RESET)
-        save_business(
-            conn,
+        to_save.append(
             (
                 name,
                 address,
@@ -106,8 +106,11 @@ async def scrape_at_location(
                 query,
                 lat_val,
                 lon_val,
-            ),
+            )
         )
+    if to_save:
+        with conn:
+            save_business_batch(conn, to_save)
 
 
 async def scrape_city_grid(

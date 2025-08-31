@@ -4,7 +4,7 @@ import re
 import logging
 from typing import Set, Tuple
 
-from db import init_db, save_business, get_dsn, close_db, load_business_keys
+from db import init_db, save_business_batch, get_dsn, close_db, load_business_keys
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -18,6 +18,7 @@ from playwright.async_api import async_playwright
 async def collect_current_listings(page, query: str, seen: Set[Tuple[str, str]], conn):
     """Collect visible listings from the results column."""
     new_entries: list[Tuple[str, str]] = []
+    to_save: list[tuple] = []
     listings = await page.locator("//a[contains(@href, 'https://www.google.com/maps/place')]").all()
     logger.debug("Scanning %d sidebar listings", len(listings))
     for listing in listings:
@@ -42,8 +43,7 @@ async def collect_current_listings(page, query: str, seen: Set[Tuple[str, str]],
         if match:
             lat = float(match.group(1))
             lon = float(match.group(2))
-        save_business(
-            conn,
+        to_save.append(
             (
                 name,
                 address,
@@ -53,8 +53,11 @@ async def collect_current_listings(page, query: str, seen: Set[Tuple[str, str]],
                 query,
                 lat,
                 lon,
-            ),
+            )
         )
+    if to_save:
+        with conn:
+            save_business_batch(conn, to_save)
     return new_entries
 
 

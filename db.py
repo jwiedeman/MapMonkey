@@ -106,12 +106,14 @@ def init_db(dsn: str | None, *, storage: str | None = None):
         conn.execute("PRAGMA foreign_keys=ON;")
         # Additional tuning for large datasets
         conn.execute("PRAGMA temp_store=MEMORY;")
-        conn.execute("PRAGMA cache_size=-64000;")
+        conn.execute("PRAGMA mmap_size=30000000000;")
+        conn.execute("PRAGMA cache_size=-200000;")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS businesses (
-                name TEXT,
-                address TEXT,
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                address TEXT NOT NULL,
                 website TEXT,
                 phone TEXT,
                 reviews_average REAL,
@@ -210,23 +212,23 @@ def load_business_keys(conn, *, storage: str | None = None) -> set[tuple[str, st
     return keys
 
 
-def save_business(conn, values: tuple, *, storage: str | None = None) -> None:
-    """Insert or update a business row using the active backend."""
+def save_business_batch(conn, values_seq: list[tuple], *, storage: str | None = None) -> None:
+    """Insert or update multiple business rows using the active backend."""
     storage = get_storage(storage)
 
     if storage == "cassandra":
-        conn.execute(
-            """
-            INSERT INTO businesses (
-                name, address, website, phone, reviews_average, query, latitude, longitude
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            values,
-        )
+        for values in values_seq:
+            conn.execute(
+                """
+                INSERT INTO businesses (
+                    name, address, website, phone, reviews_average, query, latitude, longitude
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                values,
+            )
 
     elif storage == "sqlite":
-        cur = conn.cursor()
-        cur.execute(
+        conn.executemany(
             """
             INSERT INTO businesses (
                 name, address, website, phone, reviews_average, query, latitude, longitude
@@ -239,34 +241,29 @@ def save_business(conn, values: tuple, *, storage: str | None = None) -> None:
                 latitude=excluded.latitude,
                 longitude=excluded.longitude
             """,
-            values,
+            values_seq,
         )
-        conn.commit()
 
     elif storage == "csv":
         path = Path(conn)
-        key_name = values[0].strip().lower()
-        key_address = values[1].strip().lower()
-        exists = False
+        existing: set[tuple[str, str]] = set()
         if path.exists():
             with path.open() as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    if (
-                        row["name"].strip().lower() == key_name
-                        and row["address"].strip().lower() == key_address
-                    ):
-                        exists = True
-                        break
-        if not exists:
-            with path.open("a", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(values)
+                    existing.add((row["name"].strip().lower(), row["address"].strip().lower()))
+        with path.open("a", newline="") as f:
+            writer = csv.writer(f)
+            for values in values_seq:
+                key = (values[0].strip().lower(), values[1].strip().lower())
+                if key not in existing:
+                    writer.writerow(values)
+                    existing.add(key)
 
     else:
         # postgres
         with conn.cursor() as cur:
-            cur.execute(
+            cur.executemany(
                 """
                 INSERT INTO businesses (
                     name, address, website, phone, reviews_average, query, latitude, longitude
@@ -279,9 +276,18 @@ def save_business(conn, values: tuple, *, storage: str | None = None) -> None:
                     latitude=EXCLUDED.latitude,
                     longitude=EXCLUDED.longitude
                 """,
-                values,
+                values_seq,
             )
-            conn.commit()
+
+
+def save_business(conn, values: tuple, *, storage: str | None = None) -> None:
+    """Insert or update a single business row using the active backend."""
+    storage = get_storage(storage)
+    if storage in {"sqlite", "postgres"}:
+        with conn:
+            save_business_batch(conn, [values], storage=storage)
+    else:
+        save_business_batch(conn, [values], storage=storage)
 
 
 def close_db(conn, *, storage: str | None = None) -> None:
