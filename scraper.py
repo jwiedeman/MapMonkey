@@ -5,8 +5,6 @@ import re
 import logging
 from typing import Sequence, Set, Tuple
 
-# Cache geocoding results to avoid repeated requests
-_geocode_cache: dict[str, tuple[float, float]] = {}
 from playwright.async_api import async_playwright
 from db import init_db, save_business_batch, get_dsn, close_db, load_business_keys
 
@@ -16,6 +14,9 @@ logger = logging.getLogger(__name__)
 # ANSI escape codes for colored output
 GREEN_ON_BLACK = "\033[32;40m"
 RESET = "\033[0m"
+
+# Cache geocoding results to avoid repeated requests
+_geocode_cache: dict[str, tuple[float, float]] = {}
 
 
 async def scrape_at_location(
@@ -132,22 +133,22 @@ async def scrape_city_grid(
     db_conn = init_db(get_dsn(dsn))
     seen: Set[Tuple[str, str]] = load_business_keys(db_conn)
 
-    async def geocode_city(page):
+    async def geocode_city(pw_page):
         cached = _geocode_cache.get(city)
         if cached:
             return cached
-        await page.goto("https://www.google.com/maps", timeout=60000)
-        await page.fill("//input[@id='searchboxinput']", city)
-        await page.keyboard.press("Enter")
+        await pw_page.goto("https://www.google.com/maps", timeout=60000)
+        await pw_page.fill("//input[@id='searchboxinput']", city)
+        await pw_page.keyboard.press("Enter")
         try:
-            await page.wait_for_selector(
+            await pw_page.wait_for_selector(
                 "//a[contains(@href, 'https://www.google.com/maps/place')]",
                 timeout=15000,
             )
         except Exception:
             logger.warning("Timed out waiting for city results for %s", city)
-        await page.wait_for_timeout(1000)
-        match = re.search(r"@(-?\d+\.\d+),(-?\d+\.\d+)", page.url)
+        await pw_page.wait_for_timeout(1000)
+        match = re.search(r"@(-?\d+\.\d+),(-?\d+\.\d+)", pw_page.url)
         if not match:
             raise ValueError(f"Could not find coordinates for city: {city}")
         lat = float(match.group(1))
@@ -187,53 +188,3 @@ async def scrape_city_grid(
         await run(page)
 
     close_db(db_conn)
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Scrape a city grid from Google Maps")
-    parser.add_argument("city")
-    parser.add_argument("steps", type=int)
-    parser.add_argument("spacing_deg", type=float)
-    parser.add_argument("per_grid_total", type=int)
-    parser.add_argument("dsn", nargs="?", help="Postgres DSN")
-    parser.add_argument("--query", help="Single search term")
-    parser.add_argument("--terms", help="Comma separated list of search terms")
-    parser.add_argument("--headless", action="store_true", help="Run browser headless")
-    parser.add_argument("--min-delay", type=float, default=15.0, help="Minimum delay between grid steps in seconds")
-    parser.add_argument("--max-delay", type=float, default=60.0, help="Maximum delay between grid steps in seconds")
-    parser.add_argument("--store", choices=["postgres", "cassandra", "sqlite", "csv"], help="Storage backend")
-    args = parser.parse_args()
-
-    if args.store:
-        os.environ["MAPS_STORAGE"] = args.store
-
-    queries = []
-    if args.terms:
-        queries.extend([t.strip() for t in args.terms.split(',') if t.strip()])
-    if args.query:
-        queries.insert(0, args.query)
-    if not queries:
-        parser.error("Provide a query or --terms")
-
-    async def main():
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=args.headless)
-            page = await browser.new_page()
-            for term in queries:
-                search = f"\"{args.city}\" {term}".strip()
-                await scrape_city_grid(
-                    args.city,
-                    search,
-                    args.steps,
-                    args.spacing_deg,
-                    args.per_grid_total,
-                    args.dsn,
-                    min_delay=args.min_delay,
-                    max_delay=args.max_delay,
-                    page=page,
-                )
-            await browser.close()
-
-    asyncio.run(main())

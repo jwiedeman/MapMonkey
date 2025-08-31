@@ -4,7 +4,7 @@ import csv
 import json
 import os
 from db import get_dsn
-from grid_worker import scrape_city_grid
+from scraper import scrape_city_grid
 from playwright.async_api import async_playwright
 
 
