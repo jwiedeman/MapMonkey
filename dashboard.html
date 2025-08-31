@@ -97,7 +97,7 @@
         const total = totalRes.length ? totalRes[0].values[0][0] : 0;
         document.getElementById('db-stats').textContent = `DB entries: ${total}`;
 
-        const recentRes = db.exec('SELECT name, address, query FROM businesses ORDER BY id DESC LIMIT 25');
+        const recentRes = db.exec('SELECT name, address, query FROM businesses ORDER BY rowid DESC LIMIT 25');
         const recentList = document.getElementById('recent');
         recentList.innerHTML = '';
         if (recentRes.length && recentRes[0].values.length) {
