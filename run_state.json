@@ -1,1 +1,9 @@
-{"city_index": 165, "term_index": 25}
+{
+  "city_index": 0,
+  "term_index": 0,
+  "total_cities": 0,
+  "total_terms": 0,
+  "overall_progress": 0,
+  "overall_total": 0,
+  "workers": {}
+}

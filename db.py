@@ -104,6 +104,9 @@ def init_db(dsn: str | None, *, storage: str | None = None):
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA busy_timeout=30000;")
         conn.execute("PRAGMA foreign_keys=ON;")
+        # Additional tuning for large datasets
+        conn.execute("PRAGMA temp_store=MEMORY;")
+        conn.execute("PRAGMA cache_size=-64000;")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS businesses (
@@ -118,6 +121,9 @@ def init_db(dsn: str | None, *, storage: str | None = None):
                 UNIQUE(name, address)
             )
             """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_businesses_query ON businesses(query)"
         )
         conn.commit()
         return conn
@@ -183,8 +189,9 @@ def load_business_keys(conn, *, storage: str | None = None) -> set[tuple[str, st
 
     elif storage == "sqlite":
         cur = conn.cursor()
-        cur.execute("SELECT name, address FROM businesses")
-        keys.update((n.strip().lower(), a.strip().lower()) for n, a in cur.fetchall())
+        # Iterate over the cursor to avoid building a large intermediate list
+        for n, a in cur.execute("SELECT name, address FROM businesses"):
+            keys.add((n.strip().lower(), a.strip().lower()))
 
     elif storage == "csv":
         path = Path(conn)

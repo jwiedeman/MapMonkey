@@ -9,10 +9,20 @@ from playwright.async_api import async_playwright
 
 
 def load_state(path: str) -> dict:
+    """Load the run state from JSON, providing defaults for new fields."""
     if os.path.exists(path):
         with open(path) as f:
-            return json.load(f)
-    return {"city_index": 0, "term_index": 0}
+            state = json.load(f)
+    else:
+        state = {"city_index": 0, "term_index": 0}
+
+    # Ensure new keys exist so older state files can be upgraded seamlessly
+    state.setdefault("total_cities", 0)
+    state.setdefault("total_terms", 0)
+    state.setdefault("overall_progress", 0)
+    state.setdefault("overall_total", 0)
+    state.setdefault("workers", {})
+    return state
 
 
 def save_state(path: str, state: dict) -> None:
@@ -46,14 +56,24 @@ async def run_city(city: str, terms: list[str], state: dict, args) -> None:
 
         lock = asyncio.Lock()
 
-        async def worker(page):
+        async def worker(worker_id: int, page):
             nonlocal state
 
             while True:
                 try:
                     term = queue.get_nowait()
                 except asyncio.QueueEmpty:
+                    # Mark worker as idle when no more work is available
+                    async with lock:
+                        state["workers"].pop(str(worker_id), None)
+                        save_state(args.state_file, state)
                     break
+
+                # Record which term this worker is processing
+                async with lock:
+                    state["workers"][str(worker_id)] = {"city": city, "term": term}
+                    save_state(args.state_file, state)
+
                 search = f"{city} {term}".strip()
                 try:
                     await scrape_city_grid(
@@ -72,15 +92,19 @@ async def run_city(city: str, terms: list[str], state: dict, args) -> None:
                 finally:
                     async with lock:
                         state["term_index"] += 1
+                        state["overall_progress"] = (
+                            state["city_index"] * state["total_terms"]
+                            + state["term_index"]
+                        )
+                        state["workers"].pop(str(worker_id), None)
                         save_state(args.state_file, state)
 
-        await asyncio.gather(*(worker(page) for page in pages))
+        await asyncio.gather(
+            *(worker(i, page) for i, page in enumerate(pages))
+        )
 
         for browser in browsers:
             await browser.close()
-
-
-        await asyncio.gather(*(worker(page) for page in pages))
 
 async def main(args) -> None:
     args.dsn = get_dsn(args.dsn)
@@ -91,6 +115,15 @@ async def main(args) -> None:
 
 
     state = load_state(args.state_file)
+    # Update totals and overall counters in the state file
+    state["total_cities"] = len(cities)
+    state["total_terms"] = len(terms)
+    state["overall_total"] = state["total_cities"] * state["total_terms"]
+    state["overall_progress"] = (
+        state["city_index"] * state["total_terms"] + state["term_index"]
+    )
+    state.setdefault("workers", {})
+    save_state(args.state_file, state)
 
     for idx in range(state["city_index"], len(cities)):
         city = cities[idx]
@@ -101,6 +134,9 @@ async def main(args) -> None:
             break
         state["term_index"] = 0
         state["city_index"] = idx + 1
+        state["overall_progress"] = (
+            state["city_index"] * state["total_terms"] + state["term_index"]
+        )
         save_state(args.state_file, state)
 
 
