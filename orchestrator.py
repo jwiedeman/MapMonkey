@@ -34,11 +34,15 @@ def save_state(path: str, state: dict) -> None:
 
 
 def load_list(path: str) -> list[str]:
-    """Load the first column from a CSV file, skipping the header."""
+    """Load rows from a CSV, joining columns to handle city/state pairs."""
     with open(path, newline="") as f:
         reader = csv.reader(f)
         next(reader, None)  # skip header
-        return [row[0].strip() for row in reader if row and row[0].strip()]
+        return [
+            ", ".join(part.strip() for part in row if part.strip())
+            for row in reader
+            if any(part.strip() for part in row)
+        ]
 
 
 async def run_city(city: str, terms: list[str], state: dict, args) -> None:
@@ -83,7 +87,7 @@ async def run_city(city: str, terms: list[str], state: dict, args) -> None:
                     state["workers"][str(worker_id)] = {"city": city, "term": term}
                     save_state(args.state_file, state)
 
-                search = f"{city} {term}".strip()
+                search = f"\"{city}\" {term}".strip()
                 try:
                     await scrape_city_grid(
                         city,
