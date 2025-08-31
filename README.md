@@ -45,6 +45,12 @@ problematic cities. Progress is stored in `run_state.json` so interrupted runs
 can pick up where they left off. Errors on individual terms are logged and the
 remaining terms continue so a single failure doesn't abort a city.
 
+A lightweight dashboard (`dashboard.html`) is included to monitor a running
+scrape. Serve this repository's root directory (for example with
+`python -m http.server`) and open the page in a browser to see overall progress,
+worker status and the 25 most recently stored businesses pulled directly from
+the SQLite database.
+
 Provide city and term lists in CSV files (one value per line) and use
 `--concurrency` to control the number of concurrent windows. By default the
 script reads from `cities.csv` and `terms.csv` in the repository root.

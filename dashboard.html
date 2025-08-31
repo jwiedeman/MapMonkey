@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MapMonkey Dashboard</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    section {
+      margin-bottom: 2em;
+    }
+    h2 {
+      border-bottom: 1px solid #ccc;
+      padding-bottom: 0.3em;
+    }
+    ul {
+      list-style: none;
+      padding-left: 0;
+    }
+    li {
+      margin: 0.2em 0;
+    }
+    .error {
+      color: #b00;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+</head>
+<body>
+  <h1>MapMonkey Dashboard</h1>
+
+  <section id="totals-section">
+    <h2>Total Stats</h2>
+    <div id="overall"></div>
+    <div id="totals"></div>
+    <div id="db-stats"></div>
+  </section>
+
+  <section id="workers-section">
+    <h2>Workers</h2>
+    <ul id="workers"></ul>
+  </section>
+
+  <section id="recent-section">
+    <h2>Most Recent 25 Results</h2>
+    <ul id="recent"></ul>
+  </section>
+
+  <script>
+    const sqlPromise = initSqlJs({
+      locateFile: (file) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+    });
+
+    async function loadState() {
+      try {
+        const res = await fetch('run_state.json?_=' + Date.now());
+        const state = await res.json();
+
+        document.getElementById('overall').textContent =
+          `Overall progress: ${state.overall_progress ?? 0} / ${state.overall_total ?? 0}`;
+
+        document.getElementById('totals').textContent =
+          `Cities: ${state.city_index ?? 0} / ${state.total_cities ?? 0}, ` +
+          `Terms: ${state.term_index ?? 0} / ${state.total_terms ?? 0}`;
+
+        const workers = state.workers || {};
+        const workersList = document.getElementById('workers');
+        workersList.innerHTML = '';
+        const ids = Object.keys(workers);
+        if (ids.length === 0) {
+          workersList.innerHTML = '<li>Idle</li>';
+        } else {
+          ids.forEach(id => {
+            const info = workers[id];
+            const li = document.createElement('li');
+            li.textContent = `Worker ${id}: ${info.city || ''} ${info.term || ''}`.trim();
+            workersList.appendChild(li);
+          });
+        }
+
+      } catch (err) {
+        document.getElementById('overall').textContent = 'Could not load run_state.json';
+        console.error(err);
+      }
+    }
+
+    async function loadDb() {
+      try {
+        const SQL = await sqlPromise;
+        const dbRes = await fetch('maps.db?_=' + Date.now());
+        const buf = await dbRes.arrayBuffer();
+        const db = new SQL.Database(new Uint8Array(buf));
+
+        const totalRes = db.exec('SELECT COUNT(*) AS c FROM businesses');
+        const total = totalRes.length ? totalRes[0].values[0][0] : 0;
+        document.getElementById('db-stats').textContent = `DB entries: ${total}`;
+
+        const recentRes = db.exec('SELECT name, address, query FROM businesses ORDER BY id DESC LIMIT 25');
+        const recentList = document.getElementById('recent');
+        recentList.innerHTML = '';
+        if (recentRes.length && recentRes[0].values.length) {
+          recentRes[0].values.forEach(row => {
+            const li = document.createElement('li');
+            const [name, address, query] = row;
+            li.textContent = `${name} – ${address} (query: ${query})`;
+            recentList.appendChild(li);
+          });
+        } else {
+          recentList.innerHTML = '<li>No entries found</li>';
+        }
+      } catch (err) {
+        document.getElementById('db-stats').innerHTML = '<span class="error">Database unavailable</span>';
+        console.error(err);
+      }
+    }
+
+    loadState();
+    loadDb();
+    setInterval(loadState, 5000);
+    setInterval(loadDb, 10000);
+  </script>
+</body>
+</html>
