@@ -3,6 +3,7 @@ import asyncio
 import random
 import re
 import logging
+import json
 from typing import Sequence, Set, Tuple
 
 from playwright.async_api import async_playwright
@@ -17,6 +18,21 @@ RESET = "\033[0m"
 
 # Cache geocoding results to avoid repeated requests
 _geocode_cache: dict[str, tuple[float, float]] = {}
+
+
+def _update_batch_state(fill: int, total: int, state_file: str = "run_state.json") -> None:
+    """Update batch progress in the run_state.json file."""
+    try:
+        with open(state_file) as f:
+            state = json.load(f)
+    except Exception:
+        state = {}
+    state["batch_fill"] = fill
+    state["batch_total"] = total
+    tmp = state_file + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, state_file)
 
 
 async def scrape_at_location(
@@ -49,6 +65,7 @@ async def scrape_at_location(
             break
         counted = current
 
+    _update_batch_state(0, total)
     to_save: list[tuple] = []
     for listing in listings:
         await listing.click()
@@ -109,9 +126,11 @@ async def scrape_at_location(
                 lon_val,
             )
         )
+        _update_batch_state(len(to_save), total)
     if to_save:
         with conn:
             save_business_batch(conn, to_save)
+        _update_batch_state(0, total)
 
 
 async def scrape_city_grid(

@@ -35,6 +35,7 @@
     <h2>Total Stats</h2>
     <div id="overall"></div>
     <div id="totals"></div>
+    <div id="batch"></div>
     <div id="db-stats"></div>
   </section>
 
@@ -64,6 +65,9 @@
         document.getElementById('totals').textContent =
           `Cities: ${state.city_index ?? 0} / ${state.total_cities ?? 0}, ` +
           `Terms: ${state.term_index ?? 0} / ${state.total_terms ?? 0}`;
+
+        document.getElementById('batch').textContent =
+          `Batch: ${state.batch_fill ?? 0} / ${state.batch_total ?? 0}`;
 
         const workers = state.workers || {};
         const workersList = document.getElementById('workers');
