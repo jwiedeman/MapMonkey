@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import csv
 import json
 import os
 from db import get_dsn
@@ -30,6 +31,14 @@ def save_state(path: str, state: dict) -> None:
     with open(tmp, "w") as f:
         json.dump(state, f)
     os.replace(tmp, path)
+
+
+def load_list(path: str) -> list[str]:
+    """Load the first column from a CSV file, skipping the header."""
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)  # skip header
+        return [row[0].strip() for row in reader if row and row[0].strip()]
 
 
 async def run_city(city: str, terms: list[str], state: dict, args) -> None:
@@ -108,10 +117,8 @@ async def run_city(city: str, terms: list[str], state: dict, args) -> None:
 
 async def main(args) -> None:
     args.dsn = get_dsn(args.dsn)
-    terms = [t.strip() for t in args.terms.split(',') if t.strip()]
-    cities = [args.city]
-    if args.cities:
-        cities.extend([c.strip() for c in args.cities.split(',') if c.strip()])
+    cities = load_list(args.cities_file)
+    terms = load_list(args.terms_file)
 
 
     state = load_state(args.state_file)
@@ -148,9 +155,16 @@ if __name__ == "__main__":
             "using multiple browsers concurrently"
         ),
     )
-    parser.add_argument("city", help="City name to search around")
-    parser.add_argument("--cities", help="Comma separated list of additional cities")
-    parser.add_argument("--terms", required=True, help="Comma separated search terms")
+    parser.add_argument(
+        "--cities-file",
+        default="cities.csv",
+        help="Path to CSV file containing city names",
+    )
+    parser.add_argument(
+        "--terms-file",
+        default="terms.csv",
+        help="Path to CSV file containing search terms",
+    )
     parser.add_argument("--steps", type=int, default=0, help="Grid radius in steps (0 for single location)")
     parser.add_argument("--spacing-deg", type=float, default=0.02)
     parser.add_argument("--per-grid-total", type=int, default=50)
