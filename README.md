@@ -52,8 +52,10 @@ worker status and the 25 most recently stored businesses pulled directly from
 the SQLite database.
 
 Provide city and term lists in CSV files (one value per line) and use
-`--concurrency` to control the number of concurrent windows. By default the
-script reads from `cities.csv` and `terms.csv` in the repository root.
+`--concurrency` to control the number of concurrent windows. The scraper no
+longer has a practical upper bound—run dozens of workers if your hardware can
+keep up. By default the script reads from `cities.csv` and `terms.csv` in the
+repository root.
 
 ```bash
 python orchestrator.py --cities-file cities.csv --terms-file terms.csv --steps 0 --concurrency 3
@@ -64,6 +66,35 @@ to run the browsers without a visible window. Each browser works through a
 subset of the terms for the current city until all have completed, after which
 the next city begins. Specify `--state-file` to store the run state at a
 different path or delete the file to start from the beginning.
+
+### Browser identity rotation
+
+Large numbers of identical browser windows are an easy signal for anti-bot
+systems. Enable `--obfuscate` to give every worker a unique user agent,
+viewport, locale and timezone. This helps spread work across more than a dozen
+concurrent workers without seeing throttling. Fingerprints are generated from a
+pool of realistic desktop configurations, and a small stealth script removes
+common automation flags such as `navigator.webdriver`.
+
+Optional switches provide further control:
+
+- `--profile-file <path>` – load fingerprints from a JSON or plain text file.
+  Plain text files should contain one user agent per line. JSON files must
+  contain a list of objects or strings. Example object:
+
+  ```json
+  [
+    {
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.6312.86 Safari/537.36",
+      "viewport": {"width": 1920, "height": 1080},
+      "locale": "en-US",
+      "timezone": "America/New_York"
+    }
+  ]
+  ```
+
+- `--profile-seed <int>` – reuse the same fingerprint sequence for reproducible
+  runs when `--obfuscate` is set.
 
 ## Local Postgres setup
 
