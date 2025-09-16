@@ -3,9 +3,14 @@ import asyncio
 import csv
 import json
 import os
-from db import get_dsn
-from scraper import scrape_city_grid
+import random
+from typing import Optional
+
 from playwright.async_api import async_playwright
+
+from db import get_dsn
+from obfuscation import BrowserIdentity, create_identity_pool
+from scraper import scrape_city_grid
 
 
 
@@ -47,7 +52,7 @@ def load_list(path: str) -> list[str]:
 
 async def run_city(city: str, terms: list[str], state: dict, args) -> None:
     """Scrape all search terms for a single city using multiple browsers."""
-    launch_args = [
+    default_launch_args = [
         f"--window-size={args.screen_width},{args.screen_height}",
         "--window-position=0,0",
     ]
@@ -57,14 +62,27 @@ async def run_city(city: str, terms: list[str], state: dict, args) -> None:
 
             queue.put_nowait(term)
 
-        browsers = []
+        browser_contexts: list[tuple[object, object]] = []
         pages = []
         for _ in range(args.concurrency):
-            browser = await p.chromium.launch(
-                headless=args.headless, args=launch_args
-            )
-            page = await browser.new_page()
-            browsers.append(browser)
+            identity: Optional[BrowserIdentity] = None
+            launch_args = list(default_launch_args)
+            if args.obfuscate:
+                identity = args.identity_pool.sample(args.identity_rng)
+                width, height = identity.window_size()
+                launch_args = [f"--window-size={width},{height}"]
+                if not args.headless:
+                    offset_x = args.identity_rng.randint(0, 300)
+                    offset_y = args.identity_rng.randint(0, 300)
+                    launch_args.append(f"--window-position={offset_x},{offset_y}")
+
+            browser = await p.chromium.launch(headless=args.headless, args=launch_args)
+            context_kwargs = identity.to_context_kwargs() if identity else {}
+            context = await browser.new_context(**context_kwargs)
+            if identity:
+                await context.add_init_script(identity.init_script())
+            page = await context.new_page()
+            browser_contexts.append((browser, context))
             pages.append(page)
 
         lock = asyncio.Lock()
@@ -116,7 +134,8 @@ async def run_city(city: str, terms: list[str], state: dict, args) -> None:
             *(worker(i, page) for i, page in enumerate(pages))
         )
 
-        for browser in browsers:
+        for browser, context in browser_contexts:
+            await context.close()
             await browser.close()
 
 async def main(args) -> None:
@@ -184,6 +203,20 @@ if __name__ == "__main__":
         help="Number of simultaneous browser windows",
     )
     parser.add_argument(
+        "--obfuscate",
+        action="store_true",
+        help="Randomise browser fingerprints for each worker",
+    )
+    parser.add_argument(
+        "--profile-file",
+        help="Optional JSON or text file defining custom browser fingerprints",
+    )
+    parser.add_argument(
+        "--profile-seed",
+        type=int,
+        help="Seed controlling deterministic fingerprint selection",
+    )
+    parser.add_argument(
         "--min-delay", type=float, default=15.0, help="Minimum delay between grid steps"
     )
     parser.add_argument(
@@ -198,5 +231,11 @@ if __name__ == "__main__":
 
     if args.store:
         os.environ["MAPS_STORAGE"] = args.store
+
+    args.identity_pool = create_identity_pool(args.profile_file)
+    if args.profile_seed is None:
+        args.identity_rng = random.SystemRandom()
+    else:
+        args.identity_rng = random.Random(args.profile_seed)
 
     asyncio.run(main(args))
