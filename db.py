@@ -98,7 +98,9 @@ def init_db(dsn: str | None, *, storage: str | None = None):
     elif storage == "sqlite":
         # Prefer the passed-in DSN/path if given; otherwise env/default.
         path = dsn or os.environ.get("SQLITE_PATH", DEFAULT_SQLITE)
-        conn = sqlite3.connect(path, timeout=30)
+        # Allow the same connection to be shared across threads (the monitor
+        # server uses a threaded HTTP server and guards access with a lock).
+        conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
         # Better concurrency & reliability
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
