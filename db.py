@@ -243,6 +243,7 @@ def save_business_batch(conn, values_seq: list[tuple], *, storage: str | None = 
             """,
             values_seq,
         )
+        conn.commit()
 
     elif storage == "csv":
         path = Path(conn)
@@ -278,6 +279,7 @@ def save_business_batch(conn, values_seq: list[tuple], *, storage: str | None = 
                 """,
                 values_seq,
             )
+        conn.commit()
 
 
 def save_business(conn, values: tuple, *, storage: str | None = None) -> None:
@@ -298,3 +300,100 @@ def close_db(conn, *, storage: str | None = None) -> None:
     elif storage in {"postgres", "sqlite"}:
         conn.close()
     # csv storage uses a file path so nothing to close
+
+
+def count_businesses(conn, *, storage: str | None = None) -> int | None:
+    """Return the total number of businesses for the selected backend."""
+    storage = get_storage(storage)
+    if storage == "sqlite":
+        cur = conn.execute("SELECT COUNT(*) FROM businesses")
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    if storage == "postgres":
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM businesses")
+            res = cur.fetchone()
+            return int(res[0]) if res else 0
+    if storage == "csv":
+        path = Path(conn)
+        if not path.exists():
+            return 0
+        with path.open() as f:
+            # subtract header
+            return max(sum(1 for _ in f) - 1, 0)
+    if storage == "cassandra":
+        # Counting rows in Cassandra is expensive; return None to signal unsupported.
+        return None
+    return None
+
+
+def fetch_recent_businesses(
+    conn,
+    limit: int = 25,
+    *,
+    storage: str | None = None,
+) -> list[dict[str, object]]:
+    """Fetch a lightweight list of recently stored businesses."""
+    storage = get_storage(storage)
+    rows: list[tuple] = []
+    if storage == "sqlite":
+        cur = conn.execute(
+            """
+            SELECT name, address, query, latitude, longitude
+            FROM businesses
+            ORDER BY rowid DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    elif storage == "postgres":
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT name, address, query, latitude, longitude
+                FROM businesses
+                ORDER BY ctid DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            rows = cur.fetchall()
+    elif storage == "csv":
+        path = Path(conn)
+        rows = []
+        if path.exists():
+            from collections import deque
+
+            buffer = deque(maxlen=limit)
+            with path.open() as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    buffer.append(row)
+            for row in buffer:
+                rows.append(
+                    (
+                        row.get("name"),
+                        row.get("address"),
+                        row.get("query"),
+                        row.get("latitude"),
+                        row.get("longitude"),
+                    )
+                )
+    elif storage == "cassandra":
+        result = conn.execute(
+            "SELECT name, address, query, latitude, longitude FROM businesses LIMIT %s",
+            (limit,),
+        )
+        rows = [(r.name, r.address, r.query, r.latitude, r.longitude) for r in result]
+
+    return [
+        {
+            "name": row[0],
+            "address": row[1],
+            "query": row[2],
+            "latitude": row[3],
+            "longitude": row[4],
+        }
+        for row in rows
+    ]

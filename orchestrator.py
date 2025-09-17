@@ -1,48 +1,38 @@
 import argparse
 import asyncio
 import csv
-import json
 import os
 import random
 from typing import Optional
 
 from playwright.async_api import async_playwright
+from prometheus_client import Counter, Gauge, start_http_server
 
 from db import get_dsn
 from obfuscation import BrowserIdentity, create_identity_pool
 from scraper import scrape_city_grid
+from state_manager import StateManager, load_state
+from storage_manager import BusinessStore
 
 
-
-def load_state(path: str) -> dict:
-    """Load the run state from JSON, providing defaults for new fields."""
-    if os.path.exists(path):
-        with open(path) as f:
-            state = json.load(f)
-    else:
-        state = {"city_index": 0, "term_index": 0}
-
-    # Ensure new keys exist so older state files can be upgraded seamlessly
-    state.setdefault("total_cities", 0)
-    state.setdefault("total_terms", 0)
-    state.setdefault("overall_progress", 0)
-    state.setdefault("overall_total", 0)
-    state.setdefault("workers", {})
-    return state
-
-
-def save_state(path: str, state: dict) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(state, f)
-    os.replace(tmp, path)
+TERMS_PROCESSED = Counter(
+    "mapmonkey_terms_processed_total",
+    "Number of search terms fully processed",
+)
+BUSINESSES_SAVED = Counter(
+    "mapmonkey_businesses_saved_total",
+    "Number of unique businesses stored",
+)
+ACTIVE_WORKERS = Gauge(
+    "mapmonkey_active_workers",
+    "Number of workers actively scraping",
+)
 
 
 def load_list(path: str) -> list[str]:
-    """Load rows from a CSV, joining columns to handle city/state pairs."""
     with open(path, newline="") as f:
         reader = csv.reader(f)
-        next(reader, None)  # skip header
+        next(reader, None)
         return [
             ", ".join(part.strip() for part in row if part.strip())
             for row in reader
@@ -50,19 +40,19 @@ def load_list(path: str) -> list[str]:
         ]
 
 
-async def run_city(city: str, terms: list[str], state: dict, args) -> None:
-    """Scrape all search terms for a single city using multiple browsers."""
+async def run_city(city: str, terms: list[str], state_mgr: StateManager, args) -> None:
     default_launch_args = [
         f"--window-size={args.screen_width},{args.screen_height}",
         "--window-position=0,0",
     ]
+
     async with async_playwright() as p:
         queue: asyncio.Queue[str] = asyncio.Queue()
-        for term in terms[state["term_index"]:]:
-
+        start_index = state_mgr.state.get("term_index", 0)
+        for term in terms[start_index:]:
             queue.put_nowait(term)
 
-        browser_contexts: list[tuple[object, object]] = []
+        browser_contexts = []
         pages = []
         for _ in range(args.concurrency):
             identity: Optional[BrowserIdentity] = None
@@ -85,150 +75,134 @@ async def run_city(city: str, terms: list[str], state: dict, args) -> None:
             browser_contexts.append((browser, context))
             pages.append(page)
 
-        lock = asyncio.Lock()
-
         async def worker(worker_id: int, page):
-            nonlocal state
+            store = BusinessStore(args.dsn)
+            try:
+                while True:
+                    try:
+                        term = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        await state_mgr.clear_worker(worker_id)
+                        await state_mgr.clear_batch(worker_id)
+                        break
 
-            while True:
-                try:
-                    term = queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    # Mark worker as idle when no more work is available
-                    async with lock:
-                        state["workers"].pop(str(worker_id), None)
-                        save_state(args.state_file, state)
-                    break
+                    await state_mgr.assign_worker(worker_id, city, term)
+                    ACTIVE_WORKERS.inc()
+                    search = f"\"{city}\" {term}".strip()
+                    context = {"city": city, "term": term, "query": search}
+                    async def on_progress(fill: int, total: int) -> None:
+                        await state_mgr.update_batch(worker_id, fill, total)
 
-                # Record which term this worker is processing
-                async with lock:
-                    state["workers"][str(worker_id)] = {"city": city, "term": term}
-                    save_state(args.state_file, state)
+                    async def on_heartbeat() -> None:
+                        await state_mgr.worker_heartbeat(worker_id)
 
-                search = f"\"{city}\" {term}".strip()
-                try:
-                    await scrape_city_grid(
-                        city,
-                        search,
-                        args.steps,
-                        args.spacing_deg,
-                        args.per_grid_total,
-                        args.dsn,
-                        min_delay=args.min_delay,
-                        max_delay=args.max_delay,
-                        page=page,
-                    )
-                except Exception as e:
-                    print(f"Error processing term '{term}' in city '{city}': {e}")
-                finally:
-                    async with lock:
-                        state["term_index"] += 1
-                        state["overall_progress"] = (
-                            state["city_index"] * state["total_terms"]
-                            + state["term_index"]
+                    async def on_event(level: str, message: str, context: Optional[dict] = None) -> None:
+                        payload = dict(context or {})
+                        payload.setdefault("city", city)
+                        payload.setdefault("term", term)
+                        payload.setdefault("query", search)
+                        await state_mgr.record_event(level, message, worker_id=worker_id, context=payload)
+
+                    async def on_business(records, ctx):
+                        if not records:
+                            return
+                        merged_context = dict(context)
+                        merged_context.update(ctx or {})
+                        BUSINESSES_SAVED.inc(len(records))
+                        await state_mgr.record_business_batch(worker_id, merged_context, records)
+
+                    try:
+                        await scrape_city_grid(
+                            city,
+                            search,
+                            args.steps,
+                            args.spacing_deg,
+                            args.per_grid_total,
+                            args.dsn,
+                            min_delay=args.min_delay,
+                            max_delay=args.max_delay,
+                            page=page,
+                            store=store,
+                            context=context,
+                            progress_cb=on_progress,
+                            heartbeat_cb=on_heartbeat,
+                            event_cb=on_event,
+                            business_cb=on_business,
                         )
-                        state["workers"].pop(str(worker_id), None)
-                        save_state(args.state_file, state)
+                    except Exception as exc:  # noqa: BLE001
+                        await on_event("error", f"Error processing term: {exc}")
+                    finally:
+                        await state_mgr.clear_batch(worker_id)
+                        await state_mgr.clear_worker(worker_id)
+                        await state_mgr.increment_term()
+                        TERMS_PROCESSED.inc()
+                        ACTIVE_WORKERS.dec()
 
-        await asyncio.gather(
-            *(worker(i, page) for i, page in enumerate(pages))
-        )
+            finally:
+                store.close()
+
+        await asyncio.gather(*(worker(i, page) for i, page in enumerate(pages)))
 
         for browser, context in browser_contexts:
             await context.close()
             await browser.close()
+
 
 async def main(args) -> None:
     args.dsn = get_dsn(args.dsn)
     cities = load_list(args.cities_file)
     terms = load_list(args.terms_file)
 
-
     state = load_state(args.state_file)
-    # Update totals and overall counters in the state file
     state["total_cities"] = len(cities)
     state["total_terms"] = len(terms)
     state["overall_total"] = state["total_cities"] * state["total_terms"]
     state["overall_progress"] = (
-        state["city_index"] * state["total_terms"] + state["term_index"]
+        state.get("city_index", 0) * state["total_terms"] + state.get("term_index", 0)
     )
-    state.setdefault("workers", {})
-    save_state(args.state_file, state)
 
-    for idx in range(state["city_index"], len(cities)):
+    state_mgr = StateManager(args.state_file, state, flush_interval=args.flush_interval)
+    await state_mgr.flush(force=True)
+
+    for idx in range(state.get("city_index", 0), len(cities)):
         city = cities[idx]
+        await state_mgr.start_city(idx, city)
         try:
-            await run_city(city, terms, state, args)
-        except Exception as e:
-            print(f"Error processing city '{city}': {e}")
+            await run_city(city, terms, state_mgr, args)
+        except Exception as exc:  # noqa: BLE001
+            await state_mgr.record_event("error", f"Error processing city '{city}': {exc}")
             break
-        state["term_index"] = 0
-        state["city_index"] = idx + 1
-        state["overall_progress"] = (
-            state["city_index"] * state["total_terms"] + state["term_index"]
-        )
-        save_state(args.state_file, state)
+        await state_mgr.next_city(idx + 1)
 
 
-
-if __name__ == "__main__":
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description=(
-            "Run Google Maps searches across multiple terms for each city, "
-            "using multiple browsers concurrently"
-        ),
+        description="Run Google Maps searches across multiple terms for each city",
     )
-    parser.add_argument(
-        "--cities-file",
-        default="cities.csv",
-        help="Path to CSV file containing city names",
-    )
-    parser.add_argument(
-        "--terms-file",
-        default="terms.csv",
-        help="Path to CSV file containing search terms",
-    )
-    parser.add_argument("--steps", type=int, default=0, help="Grid radius in steps (0 for single location)")
+    parser.add_argument("--cities-file", default="cities.csv")
+    parser.add_argument("--terms-file", default="terms.csv")
+    parser.add_argument("--steps", type=int, default=0)
     parser.add_argument("--spacing-deg", type=float, default=0.02)
     parser.add_argument("--per-grid-total", type=int, default=50)
-    parser.add_argument("--dsn", help="Database DSN or path (depends on storage)")
+    parser.add_argument("--dsn", help="Database DSN or path")
     parser.add_argument("--screen-width", type=int, default=1920)
     parser.add_argument("--screen-height", type=int, default=1080)
     parser.add_argument("--store", choices=["postgres", "cassandra", "sqlite", "csv"], help="Storage backend")
-    parser.add_argument("--headless", action="store_true", help="Run browsers headless")
-    parser.add_argument(
-        "--concurrency",
-        type=int,
-        default=4,
-        help="Number of simultaneous browser windows",
-    )
-    parser.add_argument(
-        "--obfuscate",
-        action="store_true",
-        help="Randomise browser fingerprints for each worker",
-    )
-    parser.add_argument(
-        "--profile-file",
-        help="Optional JSON or text file defining custom browser fingerprints",
-    )
-    parser.add_argument(
-        "--profile-seed",
-        type=int,
-        help="Seed controlling deterministic fingerprint selection",
-    )
-    parser.add_argument(
-        "--min-delay", type=float, default=15.0, help="Minimum delay between grid steps"
-    )
-    parser.add_argument(
-        "--max-delay", type=float, default=60.0, help="Maximum delay between grid steps"
-    )
-    parser.add_argument(
-        "--state-file",
-        default="run_state.json",
-        help="Path to JSON file tracking progress for resuming",
-    )
-    args = parser.parse_args()
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--obfuscate", action="store_true")
+    parser.add_argument("--profile-file")
+    parser.add_argument("--profile-seed", type=int)
+    parser.add_argument("--min-delay", type=float, default=15.0)
+    parser.add_argument("--max-delay", type=float, default=60.0)
+    parser.add_argument("--state-file", default="run_state.json")
+    parser.add_argument("--metrics-port", type=int, help="Expose Prometheus metrics on this port")
+    parser.add_argument("--flush-interval", type=float, default=1.0, help="State flush interval in seconds")
+    return parser.parse_args()
 
+
+if __name__ == "__main__":
+    args = parse_args()
     if args.store:
         os.environ["MAPS_STORAGE"] = args.store
 
@@ -237,5 +211,8 @@ if __name__ == "__main__":
         args.identity_rng = random.SystemRandom()
     else:
         args.identity_rng = random.Random(args.profile_seed)
+
+    if args.metrics_port:
+        start_http_server(args.metrics_port)
 
     asyncio.run(main(args))
