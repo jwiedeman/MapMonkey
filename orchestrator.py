@@ -6,7 +6,36 @@ import random
 from typing import Optional
 
 from playwright.async_api import async_playwright
-from prometheus_client import Counter, Gauge, start_http_server
+try:
+    from prometheus_client import Counter, Gauge, start_http_server
+
+    PROMETHEUS_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    PROMETHEUS_AVAILABLE = False
+
+    class _NoopMetric:
+        def __init__(self, *args, **kwargs) -> None:  # noqa: D401 - stub
+            """Fallback metric that ignores all operations."""
+
+        def inc(self, *args, **kwargs) -> None:  # noqa: D401 - stub
+            """Increment no-op."""
+
+        def dec(self, *args, **kwargs) -> None:  # noqa: D401 - stub
+            """Decrement no-op."""
+
+        def set(self, *args, **kwargs) -> None:  # noqa: D401 - stub
+            """Set no-op."""
+
+    class Counter(_NoopMetric):
+        pass
+
+    class Gauge(_NoopMetric):
+        pass
+
+    def start_http_server(*args, **kwargs):  # type: ignore[override]
+        raise RuntimeError(
+            "Prometheus metrics requested but prometheus_client is not installed."
+        )
 
 from db import get_dsn
 from obfuscation import BrowserIdentity, create_identity_pool
@@ -213,6 +242,10 @@ if __name__ == "__main__":
         args.identity_rng = random.Random(args.profile_seed)
 
     if args.metrics_port:
+        if not PROMETHEUS_AVAILABLE:
+            raise SystemExit(
+                "--metrics-port requires prometheus_client. Install it via 'pip install prometheus-client'."
+            )
         start_http_server(args.metrics_port)
 
     asyncio.run(main(args))
