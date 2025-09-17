@@ -45,11 +45,19 @@ problematic cities. Progress is stored in `run_state.json` so interrupted runs
 can pick up where they left off. Errors on individual terms are logged and the
 remaining terms continue so a single failure doesn't abort a city.
 
-A lightweight dashboard (`dashboard.html`) is included to monitor a running
-scrape. Serve this repository's root directory (for example with
-`python -m http.server`) and open the page in a browser to see overall progress,
-worker status and the 25 most recently stored businesses pulled directly from
-the SQLite database.
+A lightweight dashboard (`dashboard.html`) and API server (`monitor_server.py`)
+are included to monitor a running scrape. The server reads `run_state.json`
+and the active datastore (SQLite, Postgres, Cassandra or CSV) to expose compact
+JSON endpoints that power the dashboard without repeatedly downloading the full
+database. Start it from the repository root and browse to the reported URL:
+
+```bash
+python monitor_server.py --port 8080
+```
+
+The refreshed dashboard highlights worker heartbeats, stuck-worker alerts,
+batch progress, per-city/per-query leaderboards and recent inserts without
+requiring any browser extensions.
 
 Provide city and term lists in CSV files (one value per line) and use
 `--concurrency` to control the number of concurrent windows. The scraper no
@@ -66,6 +74,21 @@ to run the browsers without a visible window. Each browser works through a
 subset of the terms for the current city until all have completed, after which
 the next city begins. Specify `--state-file` to store the run state at a
 different path or delete the file to start from the beginning.
+
+### Monitoring and metrics
+
+Expose Prometheus metrics with `--metrics-port <port>`; counters for processed
+terms, saved businesses and the current number of active workers become
+available under `/metrics`. The monitoring server described above also surfaces
+the same state information over REST for custom tooling.
+
+### Experimental crawler
+
+`experimental_crawler.py` contains an alternate implementation that collects
+listings directly from the left-hand results pane (avoiding per-card page
+navigations) and experiments with adaptive scrolling heuristics. It reuses the
+new storage pipeline so results still flow through the same deduplication
+logic. Treat it as an opt-in playground when iterating on scraping strategies.
 
 ### Browser identity rotation
 

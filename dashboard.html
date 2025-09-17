@@ -1,132 +1,378 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>MapMonkey Dashboard</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-    }
-    section {
-      margin-bottom: 2em;
-    }
-    h2 {
-      border-bottom: 1px solid #ccc;
-      padding-bottom: 0.3em;
-    }
-    ul {
-      list-style: none;
-      padding-left: 0;
-    }
-    li {
-      margin: 0.2em 0;
-    }
-    .error {
-      color: #b00;
-    }
-  </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
-</head>
-<body>
-  <h1>MapMonkey Dashboard</h1>
+  <head>
+    <meta charset="UTF-8" />
+    <title>MapMonkey Dashboard</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        margin: 0;
+        background: #f4f7fb;
+        color: #1b1f24;
+      }
+      header {
+        padding: 20px 40px;
+        background: linear-gradient(135deg, #1c92d2, #4fa49a);
+        color: #fff;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 28px;
+      }
+      main {
+        padding: 30px 40px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 20px;
+      }
+      .card {
+        background: #fff;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 10px 25px rgba(31, 49, 74, 0.08);
+      }
+      .card h2 {
+        margin-top: 0;
+        font-size: 18px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #6d7a90;
+      }
+      .progress-bar {
+        position: relative;
+        height: 12px;
+        border-radius: 6px;
+        background: #e2e6ef;
+        overflow: hidden;
+        margin-top: 10px;
+      }
+      .progress-bar span {
+        display: block;
+        height: 100%;
+        background: linear-gradient(135deg, #4fa49a, #1c92d2);
+        transition: width 0.3s ease;
+      }
+      .progress-label {
+        margin-top: 8px;
+        font-size: 14px;
+        color: #3a4459;
+      }
+      .workers-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      .worker-item {
+        background: #f6f9fc;
+        border-radius: 10px;
+        padding: 12px 15px;
+        display: flex;
+        flex-direction: column;
+        border-left: 4px solid transparent;
+      }
+      .worker-item.stuck {
+        border-color: #e55353;
+        background: #fdecec;
+      }
+      .worker-item .meta {
+        font-size: 13px;
+        color: #5f6b81;
+      }
+      .alert-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      .alert-item {
+        padding: 10px 12px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        font-size: 14px;
+      }
+      .alert-item.warning {
+        background: #fff3cd;
+        color: #856404;
+      }
+      .alert-item.error {
+        background: #f8d7da;
+        color: #721c24;
+      }
+      .alert-item.info {
+        background: #d1ecf1;
+        color: #0c5460;
+      }
+      .metric-group {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 10px;
+        margin-top: 15px;
+      }
+      .metric {
+        background: #f6f9fc;
+        padding: 12px 14px;
+        border-radius: 10px;
+        font-size: 14px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+      th, td {
+        padding: 8px 10px;
+        text-align: left;
+        border-bottom: 1px solid #e2e6ef;
+      }
+      th {
+        color: #6d7a90;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .timestamp {
+        font-size: 12px;
+        color: #6d7a90;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>MapMonkey Control Panel</h1>
+      <p id="overall-subtitle">Loading run metrics…</p>
+    </header>
+    <main>
+      <section class="grid">
+        <article class="card" id="overall-card">
+          <h2>Overall Progress</h2>
+          <div class="progress-bar"><span id="overall-progress"></span></div>
+          <div class="progress-label" id="overall-label"></div>
+          <div class="progress-label" id="overall-breakdown"></div>
+        </article>
 
-  <section id="totals-section">
-    <h2>Total Stats</h2>
-    <div id="overall"></div>
-    <div id="totals"></div>
-    <div id="batch"></div>
-    <div id="db-stats"></div>
-  </section>
+        <article class="card">
+          <h2>Batch Progress</h2>
+          <div class="progress-bar"><span id="batch-progress"></span></div>
+          <div class="progress-label" id="batch-label"></div>
+          <div class="progress-label" id="db-stats"></div>
+        </article>
 
-  <section id="workers-section">
-    <h2>Workers</h2>
-    <ul id="workers"></ul>
-  </section>
+        <article class="card">
+          <h2>Metrics</h2>
+          <div class="metric-group" id="metrics-summary"></div>
+        </article>
+      </section>
 
-  <section id="recent-section">
-    <h2>Most Recent 25 Results</h2>
-    <ul id="recent"></ul>
-  </section>
+      <section class="grid" style="margin-top: 25px;">
+        <article class="card">
+          <h2>Active Workers</h2>
+          <div class="workers-list" id="workers"></div>
+        </article>
 
-  <script>
-    const sqlPromise = initSqlJs({
-      locateFile: (file) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
-    });
+        <article class="card">
+          <h2>Alerts &amp; Events</h2>
+          <ul class="alert-list" id="alerts"></ul>
+        </article>
 
-    async function loadState() {
-      try {
-        const res = await fetch('run_state.json?_=' + Date.now());
-        const state = await res.json();
+        <article class="card">
+          <h2>Recent Businesses</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Address</th>
+                <th>Query</th>
+              </tr>
+            </thead>
+            <tbody id="recent"></tbody>
+          </table>
+        </article>
+      </section>
+    </main>
 
-        document.getElementById('overall').textContent =
-          `Overall progress: ${state.overall_progress ?? 0} / ${state.overall_total ?? 0}`;
+    <script>
+      const numberFormat = new Intl.NumberFormat();
 
-        document.getElementById('totals').textContent =
-          `Cities: ${state.city_index ?? 0} / ${state.total_cities ?? 0}, ` +
-          `Terms: ${state.term_index ?? 0} / ${state.total_terms ?? 0}`;
+      function updateProgress(element, percent) {
+        element.style.width = `${Math.min(percent, 100)}%`;
+      }
 
-        document.getElementById('batch').textContent =
-          `Batch: ${state.batch_fill ?? 0} / ${state.batch_total ?? 0}`;
+      function formatPercent(value, total) {
+        if (!total) return '0%';
+        return `${((value / total) * 100).toFixed(1)}%`;
+      }
 
-        const workers = state.workers || {};
-        const workersList = document.getElementById('workers');
-        workersList.innerHTML = '';
-        const ids = Object.keys(workers);
-        if (ids.length === 0) {
-          workersList.innerHTML = '<li>Idle</li>';
-        } else {
-          ids.forEach(id => {
-            const info = workers[id];
-            const li = document.createElement('li');
-            li.textContent = `Worker ${id}: ${info.city || ''} ${info.term || ''}`.trim();
-            workersList.appendChild(li);
-          });
+      function renderWorkers(workers) {
+        const container = document.getElementById('workers');
+        container.innerHTML = '';
+        if (!workers.length) {
+          container.innerHTML = '<div class="worker-item">All workers idle.</div>';
+          return;
         }
 
-      } catch (err) {
-        document.getElementById('overall').textContent = 'Could not load run_state.json';
-        console.error(err);
+        workers.forEach(worker => {
+          const div = document.createElement('div');
+          div.className = 'worker-item' + (worker.stuck ? ' stuck' : '');
+          const status = worker.stuck ? 'Stuck' : 'Active';
+          const headline = document.createElement('strong');
+          headline.textContent = `Worker ${worker.id} — ${status}`;
+          const meta = document.createElement('span');
+          meta.className = 'meta';
+          const assigned = worker.assigned_at ? new Date(worker.assigned_at * 1000).toLocaleTimeString() : 'Unknown';
+          const heartbeat = worker.heartbeat ? new Date(worker.heartbeat * 1000).toLocaleTimeString() : 'Never';
+          meta.textContent = `${worker.city ?? 'n/a'} | ${worker.term ?? 'n/a'} • Assigned ${assigned}, heartbeat ${heartbeat}`;
+          div.appendChild(headline);
+          div.appendChild(meta);
+          container.appendChild(div);
+        });
       }
-    }
 
-    async function loadDb() {
-      try {
-        const SQL = await sqlPromise;
-        const dbRes = await fetch('maps.db?_=' + Date.now());
-        const buf = await dbRes.arrayBuffer();
-        const db = new SQL.Database(new Uint8Array(buf));
-
-        const totalRes = db.exec('SELECT COUNT(*) AS c FROM businesses');
-        const total = totalRes.length ? totalRes[0].values[0][0] : 0;
-        document.getElementById('db-stats').textContent = `DB entries: ${total}`;
-
-        const recentRes = db.exec('SELECT name, address, query FROM businesses ORDER BY rowid DESC LIMIT 25');
-        const recentList = document.getElementById('recent');
-        recentList.innerHTML = '';
-        if (recentRes.length && recentRes[0].values.length) {
-          recentRes[0].values.forEach(row => {
-            const li = document.createElement('li');
-            const [name, address, query] = row;
-            li.textContent = `${name} – ${address} (query: ${query})`;
-            recentList.appendChild(li);
-          });
-        } else {
-          recentList.innerHTML = '<li>No entries found</li>';
+      function renderAlerts(alerts) {
+        const list = document.getElementById('alerts');
+        list.innerHTML = '';
+        if (!alerts.length) {
+          list.innerHTML = '<li class="alert-item info">No alerts recorded.</li>';
+          return;
         }
-      } catch (err) {
-        document.getElementById('db-stats').innerHTML = '<span class="error">Database unavailable</span>';
-        console.error(err);
+        alerts.slice().reverse().forEach(alert => {
+          const li = document.createElement('li');
+          li.className = `alert-item ${alert.level || 'info'}`;
+          const timestamp = alert.timestamp ? new Date(alert.timestamp * 1000).toLocaleTimeString() : '';
+          li.innerHTML = `<strong>${(alert.level || 'info').toUpperCase()}</strong> — ${alert.message || ''}<div class="timestamp">${timestamp}</div>`;
+          list.appendChild(li);
+        });
       }
-    }
 
-    function refreshAll() {
-      loadState();
-      loadDb();
-    }
+      function renderMetrics(metrics) {
+        const summary = document.getElementById('metrics-summary');
+        summary.innerHTML = '';
+        const total = metrics?.businesses_saved ?? 0;
+        const topQueries = Object.entries(metrics?.per_query || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3);
+        const topCities = Object.entries(metrics?.per_city || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3);
 
-    refreshAll();
-    setInterval(refreshAll, 1000);
-  </script>
-</body>
+        const totalMetric = document.createElement('div');
+        totalMetric.className = 'metric';
+        const totalTitle = document.createElement('strong');
+        totalTitle.textContent = 'Total saved';
+        const totalBody = document.createElement('div');
+        totalBody.textContent = numberFormat.format(total);
+        totalMetric.appendChild(totalTitle);
+        totalMetric.appendChild(document.createElement('br'));
+        totalMetric.appendChild(totalBody);
+        summary.appendChild(totalMetric);
+
+        const queryMetric = document.createElement('div');
+        queryMetric.className = 'metric';
+        const queryTitle = document.createElement('strong');
+        queryTitle.textContent = 'Top queries';
+        const queryBody = document.createElement('div');
+        queryBody.style.whiteSpace = 'pre-line';
+        queryBody.textContent = topQueries.length
+          ? topQueries.map(([query, count]) => `${query}: ${numberFormat.format(count)}`).join('\n')
+          : 'n/a';
+        queryMetric.appendChild(queryTitle);
+        queryMetric.appendChild(document.createElement('br'));
+        queryMetric.appendChild(queryBody);
+        summary.appendChild(queryMetric);
+
+        const cityMetric = document.createElement('div');
+        cityMetric.className = 'metric';
+        const cityTitle = document.createElement('strong');
+        cityTitle.textContent = 'Top cities';
+        const cityBody = document.createElement('div');
+        cityBody.style.whiteSpace = 'pre-line';
+        cityBody.textContent = topCities.length
+          ? topCities.map(([city, count]) => `${city}: ${numberFormat.format(count)}`).join('\n')
+          : 'n/a';
+        cityMetric.appendChild(cityTitle);
+        cityMetric.appendChild(document.createElement('br'));
+        cityMetric.appendChild(cityBody);
+        summary.appendChild(cityMetric);
+      }
+
+      function renderRecent(results) {
+        const body = document.getElementById('recent');
+        body.innerHTML = '';
+        if (!results.length) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 3;
+          td.textContent = 'No records yet';
+          tr.appendChild(td);
+          body.appendChild(tr);
+          return;
+        }
+        results.forEach(item => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${item.name || ''}</td>
+            <td>${item.address || ''}</td>
+            <td>${item.query || ''}</td>
+          `;
+          body.appendChild(tr);
+        });
+      }
+
+      async function loadSummary() {
+        try {
+          const res = await fetch(`/api/summary?_=${Date.now()}`);
+          if (!res.ok) throw new Error('Failed to fetch summary');
+          const data = await res.json();
+          const overall = data.overall || {};
+          const batch = data.batch || {};
+
+          const overallPercent = overall.total ? (overall.progress / overall.total) * 100 : 0;
+          updateProgress(document.getElementById('overall-progress'), overallPercent);
+          document.getElementById('overall-label').textContent = `${numberFormat.format(overall.progress || 0)} / ${numberFormat.format(overall.total || 0)} (${formatPercent(overall.progress || 0, overall.total || 0)})`;
+          const cityIndex = overall.city_index ?? 0;
+          document.getElementById('overall-breakdown').textContent = `City ${cityIndex + 1} of ${overall.total_cities || 0} • Term ${overall.term_index || 0} of ${overall.total_terms || 0}`;
+          document.getElementById('overall-subtitle').textContent = overall.current_city ? `Currently scanning ${overall.current_city}` : 'Waiting for assignment…';
+
+          const batchPercent = batch.total ? (batch.fill / batch.total) * 100 : 0;
+          updateProgress(document.getElementById('batch-progress'), batchPercent);
+          document.getElementById('batch-label').textContent = `Worker ${batch.worker ?? '—'} • ${numberFormat.format(batch.fill || 0)} / ${numberFormat.format(batch.total || 0)}`;
+
+          const dbInfo = data.database || {};
+          const totalText = dbInfo.total == null ? 'unavailable' : numberFormat.format(dbInfo.total);
+          document.getElementById('db-stats').textContent = `Backend: ${dbInfo.storage || 'unknown'} • Rows: ${totalText}`;
+
+          renderWorkers(data.workers || []);
+          renderAlerts(data.alerts || []);
+          renderMetrics(data.metrics || {});
+          renderRecent(data.recent_businesses || []);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function loadRecent() {
+        try {
+          const res = await fetch(`/api/recent?limit=25&_=${Date.now()}`);
+          if (!res.ok) return;
+          const data = await res.json();
+          renderRecent(data.results || []);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      function init() {
+        loadSummary();
+        loadRecent();
+        setInterval(loadSummary, 2000);
+        setInterval(loadRecent, 7000);
+      }
+
+      document.addEventListener('DOMContentLoaded', init);
+    </script>
+  </body>
 </html>
