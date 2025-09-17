@@ -1,6 +1,10 @@
+import argparse
+import asyncio
+import csv
+import os
 import random
 import re
-from typing import Any, Dict, Optional, Sequence
+from typing import Any, Dict, Iterable, Optional, Sequence
 
 from playwright.async_api import Page, async_playwright
 
@@ -95,6 +99,7 @@ async def experimental_scrape_city_grid(
     max_delay: float = 30.0,
     launch_args: Optional[Sequence[str]] = None,
     store: Optional[BusinessStore] = None,
+    headless: bool = True,
 ) -> None:
     query = f"\"{city}\" {term}".strip()
     own_store = store is None
@@ -144,7 +149,7 @@ async def experimental_scrape_city_grid(
             await page.wait_for_timeout(int(delay * 1000))
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=list(launch_args or []))
+        browser = await p.chromium.launch(headless=headless, args=list(launch_args or []))
         page = await browser.new_page()
         try:
             await run(page)
@@ -153,3 +158,156 @@ async def experimental_scrape_city_grid(
 
     if own_store:
         store.close()
+
+
+def load_list(path: str) -> list[str]:
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        return [
+            ", ".join(part.strip() for part in row if part.strip())
+            for row in reader
+            if any(part.strip() for part in row)
+        ]
+
+
+def resolve_values(value: Optional[str], path: str, label: str) -> list[str]:
+    if value:
+        return [value]
+    try:
+        values = load_list(path)
+    except FileNotFoundError as exc:  # pragma: no cover - CLI convenience
+        raise SystemExit(f"{label} file not found: {path}") from exc
+    if not values:
+        raise SystemExit(f"No {label.lower()} found in {path}")
+    return values
+
+
+def build_launch_args(
+    base_args: Iterable[str],
+    *,
+    headless: bool,
+    screen_width: int,
+    screen_height: int,
+) -> list[str]:
+    args = list(base_args)
+    if not headless and not any(arg.startswith("--window-size=") for arg in args):
+        args.append(f"--window-size={screen_width},{screen_height}")
+    return args
+
+
+async def run_cli(args: argparse.Namespace) -> None:
+    if args.max_delay < args.min_delay:
+        raise SystemExit("--max-delay must be greater than or equal to --min-delay")
+
+    cities = resolve_values(args.city, args.cities_file, "Cities")
+    terms = resolve_values(args.term, args.terms_file, "Terms")
+
+    launch_args = build_launch_args(
+        args.launch_args,
+        headless=args.headless,
+        screen_width=args.screen_width,
+        screen_height=args.screen_height,
+    )
+
+    store = BusinessStore(args.dsn)
+    try:
+        for city in cities:
+            for term in terms:
+                print(f"[mapmonkey] Scraping {city!r} for term {term!r}")
+                await experimental_scrape_city_grid(
+                    city,
+                    term,
+                    steps=args.steps,
+                    spacing=args.spacing_deg,
+                    per_grid_total=args.per_grid_total,
+                    dsn=args.dsn,
+                    min_delay=args.min_delay,
+                    max_delay=args.max_delay,
+                    launch_args=launch_args,
+                    store=store,
+                    headless=args.headless,
+                )
+    finally:
+        store.close()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the experimental Google Maps crawler",
+    )
+    parser.add_argument("--city", help="Single city to scrape (overrides --cities-file)")
+    parser.add_argument(
+        "--cities-file",
+        default="cities.csv",
+        help="CSV file containing cities (default: %(default)s)",
+    )
+    parser.add_argument("--term", help="Single search term (overrides --terms-file)")
+    parser.add_argument(
+        "--terms-file",
+        default="terms.csv",
+        help="CSV file containing search terms (default: %(default)s)",
+    )
+    parser.add_argument("--steps", type=int, default=0, help="Grid radius in each direction")
+    parser.add_argument(
+        "--spacing-deg",
+        type=float,
+        default=0.02,
+        help="Distance in degrees between neighbouring grid cells",
+    )
+    parser.add_argument(
+        "--per-grid-total",
+        type=int,
+        default=50,
+        help="Maximum number of cards to collect per grid coordinate",
+    )
+    parser.add_argument("--dsn", help="Database DSN or path (defaults to environment configuration)")
+    parser.add_argument(
+        "--min-delay",
+        type=float,
+        default=10.0,
+        help="Minimum seconds to wait between grid cells",
+    )
+    parser.add_argument(
+        "--max-delay",
+        type=float,
+        default=30.0,
+        help="Maximum seconds to wait between grid cells",
+    )
+    parser.add_argument(
+        "--launch-arg",
+        dest="launch_args",
+        action="append",
+        default=[],
+        help="Additional Chromium launch argument (repeatable)",
+    )
+    parser.add_argument(
+        "--store",
+        choices=["postgres", "cassandra", "sqlite", "csv"],
+        help="Storage backend to use (overrides MAPS_STORAGE)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run Chromium in headless mode (hidden window)",
+    )
+    parser.add_argument(
+        "--screen-width",
+        type=int,
+        default=1920,
+        help="Browser window width when not running headless",
+    )
+    parser.add_argument(
+        "--screen-height",
+        type=int,
+        default=1080,
+        help="Browser window height when not running headless",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    cli_args = parse_args()
+    if cli_args.store:
+        os.environ["MAPS_STORAGE"] = cli_args.store
+    asyncio.run(run_cli(cli_args))
