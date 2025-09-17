@@ -4,84 +4,147 @@
     <meta charset="UTF-8" />
     <title>MapMonkey Dashboard</title>
     <style>
+      :root {
+        color-scheme: light;
+        --bg: #f0f2f8;
+        --fg: #1f2633;
+        --card-bg: #ffffff;
+        --accent: #3153d1;
+        --accent-soft: #e7ecff;
+        --muted: #6b778c;
+        --border: #d8deeb;
+        --error: #de4f4f;
+        --warning: #f7b955;
+        --success: #31b57c;
+      }
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
       body {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         margin: 0;
-        background: #f4f7fb;
-        color: #1b1f24;
+        background: var(--bg);
+        color: var(--fg);
       }
       header {
-        padding: 20px 40px;
-        background: linear-gradient(135deg, #1c92d2, #4fa49a);
+        padding: 28px 48px 32px;
+        background: linear-gradient(135deg, #212b45, #284a97);
         color: #fff;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 10px 30px rgba(12, 25, 55, 0.35);
       }
       header h1 {
+        margin: 0 0 6px;
+        font-size: 32px;
+        letter-spacing: -0.02em;
+      }
+      header p {
         margin: 0;
-        font-size: 28px;
+        font-size: 15px;
+        opacity: 0.82;
+        letter-spacing: 0.03em;
       }
       main {
-        padding: 30px 40px;
+        padding: 36px 48px 48px;
       }
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-        gap: 20px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 24px;
       }
       .card {
-        background: #fff;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 10px 25px rgba(31, 49, 74, 0.08);
+        background: var(--card-bg);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 18px 40px rgba(22, 30, 61, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.6);
       }
       .card h2 {
-        margin-top: 0;
-        font-size: 18px;
+        margin: 0 0 18px;
+        font-size: 17px;
         text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #6d7a90;
+        letter-spacing: 0.16em;
+        color: var(--muted);
       }
       .progress-bar {
         position: relative;
         height: 12px;
         border-radius: 6px;
-        background: #e2e6ef;
+        background: var(--accent-soft);
         overflow: hidden;
         margin-top: 10px;
       }
       .progress-bar span {
         display: block;
         height: 100%;
-        background: linear-gradient(135deg, #4fa49a, #1c92d2);
+        background: linear-gradient(135deg, #3f81f5, #1c92d2);
         transition: width 0.3s ease;
       }
       .progress-label {
         margin-top: 8px;
         font-size: 14px;
-        color: #3a4459;
+        color: var(--muted);
+        letter-spacing: 0.02em;
       }
       .workers-list {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        max-height: 300px;
+        gap: 10px;
+        max-height: 320px;
         overflow-y: auto;
       }
       .worker-item {
-        background: #f6f9fc;
-        border-radius: 10px;
-        padding: 12px 15px;
+        background: rgba(236, 240, 255, 0.6);
+        border-radius: 12px;
+        padding: 14px 16px;
         display: flex;
-        flex-direction: column;
-        border-left: 4px solid transparent;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid var(--border);
+        font-size: 14px;
+        letter-spacing: 0.01em;
+      }
+      .worker-item:nth-child(odd) {
+        background: rgba(244, 246, 255, 0.9);
       }
       .worker-item.stuck {
-        border-color: #e55353;
-        background: #fdecec;
+        border-color: var(--error);
+        box-shadow: inset 3px 0 0 var(--error);
       }
-      .worker-item .meta {
+      .worker-item.missing {
+        border-color: var(--warning);
+        box-shadow: inset 3px 0 0 var(--warning);
+        background: rgba(247, 185, 85, 0.12);
+      }
+      .worker-label {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        color: var(--fg);
+      }
+      .worker-meta {
+        color: var(--muted);
         font-size: 13px;
-        color: #5f6b81;
+        white-space: nowrap;
+      }
+      .status-badge {
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      .worker-item.stuck .status-badge {
+        background: rgba(222, 79, 79, 0.12);
+        color: var(--error);
+      }
+      .worker-item.missing .status-badge {
+        background: rgba(247, 185, 85, 0.18);
+        color: #7a5111;
       }
       .alert-list {
         list-style: none;
@@ -96,48 +159,93 @@
         margin-bottom: 10px;
         font-size: 14px;
       }
+      .alert-item strong {
+        letter-spacing: 0.08em;
+      }
       .alert-item.warning {
-        background: #fff3cd;
-        color: #856404;
+        background: rgba(247, 185, 85, 0.18);
+        color: #7a5111;
       }
       .alert-item.error {
-        background: #f8d7da;
-        color: #721c24;
+        background: rgba(222, 79, 79, 0.16);
+        color: #7a1a1a;
       }
       .alert-item.info {
-        background: #d1ecf1;
-        color: #0c5460;
+        background: rgba(49, 133, 178, 0.18);
+        color: #1c4f69;
       }
       .metric-group {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 10px;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 12px;
         margin-top: 15px;
       }
       .metric {
-        background: #f6f9fc;
-        padding: 12px 14px;
-        border-radius: 10px;
-        font-size: 14px;
+        background: rgba(235, 239, 255, 0.6);
+        padding: 14px 16px;
+        border-radius: 12px;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .metric-title {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .metric-value {
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--fg);
+      }
+      .metric-body {
+        white-space: pre-line;
+        color: var(--fg);
       }
       table {
         width: 100%;
         border-collapse: collapse;
-        font-size: 14px;
+        font-size: 13px;
       }
       th, td {
-        padding: 8px 10px;
+        padding: 10px 12px;
         text-align: left;
-        border-bottom: 1px solid #e2e6ef;
+        border-bottom: 1px solid var(--border);
       }
       th {
-        color: #6d7a90;
+        color: var(--muted);
         text-transform: uppercase;
         letter-spacing: 0.06em;
       }
+      tbody tr:nth-child(even) {
+        background: rgba(235, 239, 255, 0.4);
+      }
+      tbody tr:hover {
+        background: rgba(63, 129, 245, 0.08);
+      }
+      tbody tr:first-child td {
+        font-weight: 600;
+        color: var(--fg);
+      }
       .timestamp {
         font-size: 12px;
-        color: #6d7a90;
+        color: var(--muted);
+      }
+      @media (max-width: 720px) {
+        header {
+          padding: 24px 28px;
+        }
+        main {
+          padding: 28px;
+        }
+        .worker-item {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .worker-meta {
+          white-space: normal;
+        }
       }
     </style>
   </head>
@@ -210,25 +318,114 @@
       function renderWorkers(workers) {
         const container = document.getElementById('workers');
         container.innerHTML = '';
+
         if (!workers.length) {
-          container.innerHTML = '<div class="worker-item">All workers idle.</div>';
+          const empty = document.createElement('div');
+          empty.className = 'worker-item';
+          empty.innerHTML = '<div class="worker-label"><span class="status-badge">Idle</span> No crawler telemetry available yet</div>';
+          container.appendChild(empty);
           return;
         }
 
-        workers.forEach(worker => {
+        const sorted = workers
+          .slice()
+          .sort((a, b) => {
+            const aid = Number.parseInt(a.id, 10);
+            const bid = Number.parseInt(b.id, 10);
+            if (Number.isNaN(aid) && Number.isNaN(bid)) return 0;
+            if (Number.isNaN(aid)) return 1;
+            if (Number.isNaN(bid)) return -1;
+            return aid - bid;
+          });
+
+        const numericMap = new Map();
+        const extras = [];
+        let maxId = 0;
+        let minId = Number.POSITIVE_INFINITY;
+
+        sorted.forEach(worker => {
+          const parsed = Number.parseInt(worker.id, 10);
+          if (Number.isNaN(parsed)) {
+            extras.push(worker);
+            return;
+          }
+          numericMap.set(parsed, worker);
+          if (parsed > maxId) maxId = parsed;
+          if (parsed < minId) minId = parsed;
+        });
+
+        const buildWorkerRow = worker => {
           const div = document.createElement('div');
           div.className = 'worker-item' + (worker.stuck ? ' stuck' : '');
-          const status = worker.stuck ? 'Stuck' : 'Active';
-          const headline = document.createElement('strong');
-          headline.textContent = `Worker ${worker.id} — ${status}`;
-          const meta = document.createElement('span');
-          meta.className = 'meta';
-          const assigned = worker.assigned_at ? new Date(worker.assigned_at * 1000).toLocaleTimeString() : 'Unknown';
-          const heartbeat = worker.heartbeat ? new Date(worker.heartbeat * 1000).toLocaleTimeString() : 'Never';
-          meta.textContent = `${worker.city ?? 'n/a'} | ${worker.term ?? 'n/a'} • Assigned ${assigned}, heartbeat ${heartbeat}`;
-          div.appendChild(headline);
+
+          const label = document.createElement('div');
+          label.className = 'worker-label';
+          const labelText = document.createElement('span');
+          labelText.textContent = `Crawler ${worker.id ?? '—'}`;
+          const badge = document.createElement('span');
+          badge.className = 'status-badge';
+          badge.textContent = worker.stuck
+            ? 'Stuck'
+            : worker.heartbeat
+            ? 'Active'
+            : 'Idle';
+          label.appendChild(labelText);
+          label.appendChild(badge);
+
+          const meta = document.createElement('div');
+          meta.className = 'worker-meta';
+          const assigned = worker.assigned_at
+            ? new Date(worker.assigned_at * 1000).toLocaleTimeString()
+            : 'Unassigned';
+          const heartbeat = worker.heartbeat
+            ? new Date(worker.heartbeat * 1000).toLocaleTimeString()
+            : 'No heartbeat';
+          const city = worker.city ?? 'n/a';
+          const term = worker.term ?? 'n/a';
+          meta.textContent = `${city} • ${term} • Assigned ${assigned} • Ping ${heartbeat}`;
+          meta.title = `City: ${city}\nQuery: ${term}\nAssigned: ${assigned}\nLast heartbeat: ${heartbeat}`;
+
+          div.appendChild(label);
           div.appendChild(meta);
-          container.appendChild(div);
+          return div;
+        };
+
+        const buildMissingRow = id => {
+          const div = document.createElement('div');
+          div.className = 'worker-item missing';
+
+          const label = document.createElement('div');
+          label.className = 'worker-label';
+          const labelText = document.createElement('span');
+          labelText.textContent = `Crawler ${id}`;
+          const badge = document.createElement('span');
+          badge.className = 'status-badge';
+          badge.textContent = 'No signal';
+          label.appendChild(labelText);
+          label.appendChild(badge);
+
+          const meta = document.createElement('div');
+          meta.className = 'worker-meta';
+          meta.textContent = 'No data reported for this crawler ID';
+          meta.title = 'No heartbeat or assignment has been received for this crawler ID.';
+
+          div.appendChild(label);
+          div.appendChild(meta);
+          return div;
+        };
+
+        const startId = minId === Number.POSITIVE_INFINITY ? 1 : Math.min(1, minId);
+        for (let id = startId; id <= maxId; id += 1) {
+          const worker = numericMap.get(id);
+          if (worker) {
+            container.appendChild(buildWorkerRow(worker));
+          } else {
+            container.appendChild(buildMissingRow(id));
+          }
+        }
+
+        extras.forEach(worker => {
+          container.appendChild(buildWorkerRow(worker));
         });
       }
 
@@ -239,13 +436,16 @@
           list.innerHTML = '<li class="alert-item info">No alerts recorded.</li>';
           return;
         }
-        alerts.slice().reverse().forEach(alert => {
-          const li = document.createElement('li');
-          li.className = `alert-item ${alert.level || 'info'}`;
-          const timestamp = alert.timestamp ? new Date(alert.timestamp * 1000).toLocaleTimeString() : '';
-          li.innerHTML = `<strong>${(alert.level || 'info').toUpperCase()}</strong> — ${alert.message || ''}<div class="timestamp">${timestamp}</div>`;
-          list.appendChild(li);
-        });
+        alerts
+          .slice()
+          .reverse()
+          .forEach(alert => {
+            const li = document.createElement('li');
+            li.className = `alert-item ${alert.level || 'info'}`;
+            const timestamp = alert.timestamp ? new Date(alert.timestamp * 1000).toLocaleTimeString() : '';
+            li.innerHTML = `<strong>${(alert.level || 'info').toUpperCase()}</strong> — ${alert.message || ''}<div class="timestamp">${timestamp}</div>`;
+            list.appendChild(li);
+          });
       }
 
       function renderMetrics(metrics) {
@@ -261,40 +461,37 @@
 
         const totalMetric = document.createElement('div');
         totalMetric.className = 'metric';
-        const totalTitle = document.createElement('strong');
-        totalTitle.textContent = 'Total saved';
-        const totalBody = document.createElement('div');
-        totalBody.textContent = numberFormat.format(total);
-        totalMetric.appendChild(totalTitle);
-        totalMetric.appendChild(document.createElement('br'));
-        totalMetric.appendChild(totalBody);
+        totalMetric.innerHTML = `
+          <div class="metric-title">Total saved</div>
+          <div class="metric-value">${numberFormat.format(total)}</div>
+        `;
         summary.appendChild(totalMetric);
 
         const queryMetric = document.createElement('div');
         queryMetric.className = 'metric';
-        const queryTitle = document.createElement('strong');
+        const queryTitle = document.createElement('div');
+        queryTitle.className = 'metric-title';
         queryTitle.textContent = 'Top queries';
         const queryBody = document.createElement('div');
-        queryBody.style.whiteSpace = 'pre-line';
+        queryBody.className = 'metric-body';
         queryBody.textContent = topQueries.length
           ? topQueries.map(([query, count]) => `${query}: ${numberFormat.format(count)}`).join('\n')
           : 'n/a';
         queryMetric.appendChild(queryTitle);
-        queryMetric.appendChild(document.createElement('br'));
         queryMetric.appendChild(queryBody);
         summary.appendChild(queryMetric);
 
         const cityMetric = document.createElement('div');
         cityMetric.className = 'metric';
-        const cityTitle = document.createElement('strong');
+        const cityTitle = document.createElement('div');
+        cityTitle.className = 'metric-title';
         cityTitle.textContent = 'Top cities';
         const cityBody = document.createElement('div');
-        cityBody.style.whiteSpace = 'pre-line';
+        cityBody.className = 'metric-body';
         cityBody.textContent = topCities.length
           ? topCities.map(([city, count]) => `${city}: ${numberFormat.format(count)}`).join('\n')
           : 'n/a';
         cityMetric.appendChild(cityTitle);
-        cityMetric.appendChild(document.createElement('br'));
         cityMetric.appendChild(cityBody);
         summary.appendChild(cityMetric);
       }
@@ -311,7 +508,8 @@
           body.appendChild(tr);
           return;
         }
-        results.forEach(item => {
+        const ordered = results.slice().reverse();
+        ordered.forEach(item => {
           const tr = document.createElement('tr');
           tr.innerHTML = `
             <td>${item.name || ''}</td>
