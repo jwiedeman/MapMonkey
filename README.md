@@ -69,6 +69,12 @@ repository root.
 python orchestrator.py --cities-file cities.csv --terms-file terms.csv --steps 0 --concurrency 3
 ```
 
+Workers send heartbeat updates while a term is in progress. The orchestrator
+automatically restarts any worker whose heartbeat stalls for longer than
+`--worker-timeout` seconds (set to `0` to disable) and checks their status every
+`--worker-check-interval` seconds. Tune these values to keep the full pool of
+workers active throughout long-running scrapes.
+
 Windows open in non‑headless mode so you can watch progress. Use `--headless`
 to run the browsers without a visible window. Each browser works through a
 subset of the terms for the current city until all have completed, after which

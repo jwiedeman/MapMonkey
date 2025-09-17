@@ -3,7 +3,10 @@ import asyncio
 import csv
 import os
 import random
-from typing import Optional
+import time
+from contextlib import suppress
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 from playwright.async_api import async_playwright
 try:
@@ -69,6 +72,16 @@ def load_list(path: str) -> list[str]:
         ]
 
 
+@dataclass
+class WorkerSlot:
+    browser: Any
+    context: Any
+    page: Any
+    task: Optional[asyncio.Task] = None
+    current_term: Optional[str] = None
+    last_heartbeat: float = field(default_factory=time.monotonic)
+
+
 async def run_city(city: str, terms: list[str], state_mgr: StateManager, args) -> None:
     default_launch_args = [
         f"--window-size={args.screen_width},{args.screen_height}",
@@ -81,30 +94,12 @@ async def run_city(city: str, terms: list[str], state_mgr: StateManager, args) -
         for term in terms[start_index:]:
             queue.put_nowait(term)
 
-        browser_contexts = []
-        pages = []
-        for _ in range(args.concurrency):
-            identity: Optional[BrowserIdentity] = None
-            launch_args = list(default_launch_args)
-            if args.obfuscate:
-                identity = args.identity_pool.sample(args.identity_rng)
-                width, height = identity.window_size()
-                launch_args = [f"--window-size={width},{height}"]
-                if not args.headless:
-                    offset_x = args.identity_rng.randint(0, 300)
-                    offset_y = args.identity_rng.randint(0, 300)
-                    launch_args.append(f"--window-position={offset_x},{offset_y}")
+        worker_slots: dict[int, WorkerSlot] = {}
+        active_tasks: set[asyncio.Task] = set()
+        shutting_down = False
 
-            browser = await p.chromium.launch(headless=args.headless, args=launch_args)
-            context_kwargs = identity.to_context_kwargs() if identity else {}
-            context = await browser.new_context(**context_kwargs)
-            if identity:
-                await context.add_init_script(identity.init_script())
-            page = await context.new_page()
-            browser_contexts.append((browser, context))
-            pages.append(page)
-
-        async def worker(worker_id: int, page):
+        async def worker(worker_id: int, slot: WorkerSlot) -> None:
+            page = slot.page
             store = BusinessStore(args.dsn)
             try:
                 while True:
@@ -113,8 +108,12 @@ async def run_city(city: str, terms: list[str], state_mgr: StateManager, args) -
                     except asyncio.QueueEmpty:
                         await state_mgr.clear_worker(worker_id)
                         await state_mgr.clear_batch(worker_id)
+                        slot.current_term = None
+                        slot.last_heartbeat = time.monotonic()
                         break
 
+                    slot.current_term = term
+                    slot.last_heartbeat = time.monotonic()
                     await state_mgr.assign_worker(worker_id, city, term)
                     ACTIVE_WORKERS.inc()
                     search = f"\"{city}\" {term}".strip()
@@ -123,6 +122,7 @@ async def run_city(city: str, terms: list[str], state_mgr: StateManager, args) -
                         await state_mgr.update_batch(worker_id, fill, total)
 
                     async def on_heartbeat() -> None:
+                        slot.last_heartbeat = time.monotonic()
                         await state_mgr.worker_heartbeat(worker_id)
 
                     async def on_event(level: str, message: str, context: Optional[dict] = None) -> None:
@@ -140,6 +140,7 @@ async def run_city(city: str, terms: list[str], state_mgr: StateManager, args) -
                         BUSINESSES_SAVED.inc(len(records))
                         await state_mgr.record_business_batch(worker_id, merged_context, records)
 
+                    term_completed = False
                     try:
                         await scrape_city_grid(
                             city,
@@ -158,23 +159,143 @@ async def run_city(city: str, terms: list[str], state_mgr: StateManager, args) -
                             event_cb=on_event,
                             business_cb=on_business,
                         )
+                        term_completed = True
+                    except asyncio.CancelledError:
+                        raise
                     except Exception as exc:  # noqa: BLE001
                         await on_event("error", f"Error processing term: {exc}")
+                        term_completed = True
                     finally:
                         await state_mgr.clear_batch(worker_id)
                         await state_mgr.clear_worker(worker_id)
-                        await state_mgr.increment_term()
-                        TERMS_PROCESSED.inc()
+                        if term_completed:
+                            await state_mgr.increment_term()
+                            TERMS_PROCESSED.inc()
                         ACTIVE_WORKERS.dec()
+                        slot.current_term = None
+                        slot.last_heartbeat = time.monotonic()
 
             finally:
                 store.close()
 
-        await asyncio.gather(*(worker(i, page) for i, page in enumerate(pages)))
+        async def start_worker(worker_id: int, *, reason: Optional[str] = None) -> None:
+            if shutting_down:
+                return
 
-        for browser, context in browser_contexts:
-            await context.close()
-            await browser.close()
+            identity: Optional[BrowserIdentity] = None
+            launch_args = list(default_launch_args)
+            if args.obfuscate:
+                identity = args.identity_pool.sample(args.identity_rng)
+                width, height = identity.window_size()
+                launch_args = [f"--window-size={width},{height}"]
+                if not args.headless:
+                    offset_x = args.identity_rng.randint(0, 300)
+                    offset_y = args.identity_rng.randint(0, 300)
+                    launch_args.append(f"--window-position={offset_x},{offset_y}")
+
+            browser = await p.chromium.launch(headless=args.headless, args=launch_args)
+            context_kwargs = identity.to_context_kwargs() if identity else {}
+            context = await browser.new_context(**context_kwargs)
+            if identity:
+                await context.add_init_script(identity.init_script())
+            page = await context.new_page()
+
+            slot = WorkerSlot(browser=browser, context=context, page=page)
+            worker_slots[worker_id] = slot
+
+            async def run_worker() -> None:
+                try:
+                    await worker(worker_id, slot)
+                finally:
+                    with suppress(Exception):
+                        await context.close()
+                    with suppress(Exception):
+                        await browser.close()
+                    if worker_slots.get(worker_id) is slot:
+                        worker_slots.pop(worker_id, None)
+
+            task = asyncio.create_task(run_worker())
+            slot.task = task
+            active_tasks.add(task)
+
+            def _cleanup(t: asyncio.Task) -> None:
+                active_tasks.discard(t)
+
+            task.add_done_callback(_cleanup)
+
+        async def restart_worker(worker_id: int, reason: str) -> None:
+            if shutting_down:
+                return
+
+            slot = worker_slots.get(worker_id)
+            if slot is None:
+                if queue.empty():
+                    return
+                await start_worker(worker_id, reason=reason)
+                return
+
+            term = slot.current_term
+            context_payload = {"city": city, "reason": reason}
+            if term is not None:
+                search = f"\"{city}\" {term}".strip()
+                context_payload.update({"term": term, "query": search})
+            task = slot.task
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            if term is not None:
+                await queue.put(term)
+            slot.current_term = None
+            await state_mgr.record_event(
+                "warning",
+                f"Restarting worker {worker_id}: {reason}",
+                worker_id=worker_id,
+                context=context_payload,
+            )
+
+            await start_worker(worker_id, reason=reason)
+
+        async def monitor_workers() -> None:
+            interval = max(args.worker_check_interval, 1.0)
+            while True:
+                if queue.empty() and all(slot.current_term is None for slot in worker_slots.values()):
+                    return
+
+                if args.worker_timeout > 0:
+                    now = time.monotonic()
+                    for worker_id, slot in list(worker_slots.items()):
+                        if slot.current_term is None:
+                            continue
+                        if now - slot.last_heartbeat <= args.worker_timeout:
+                            continue
+                        elapsed = now - slot.last_heartbeat
+                        await restart_worker(worker_id, f"no heartbeat for {elapsed:.1f}s")
+
+                await asyncio.sleep(interval)
+
+        monitor_task: Optional[asyncio.Task] = None
+        try:
+            for worker_id in range(args.concurrency):
+                await start_worker(worker_id)
+
+            monitor_task = asyncio.create_task(monitor_workers())
+            await monitor_task
+        finally:
+            shutting_down = True
+            if monitor_task is not None and not monitor_task.done():
+                monitor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await monitor_task
+
+            for slot in list(worker_slots.values()):
+                task = slot.task
+                if task is not None and not task.done():
+                    task.cancel()
+
+            for task in list(active_tasks):
+                with suppress(asyncio.CancelledError):
+                    await task
 
 
 async def main(args) -> None:
@@ -227,6 +348,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state-file", default="run_state.json")
     parser.add_argument("--metrics-port", type=int, help="Expose Prometheus metrics on this port")
     parser.add_argument("--flush-interval", type=float, default=1.0, help="State flush interval in seconds")
+    parser.add_argument(
+        "--worker-timeout",
+        type=float,
+        default=240.0,
+        help="Seconds without a heartbeat before restarting a worker (0 disables restarts)",
+    )
+    parser.add_argument(
+        "--worker-check-interval",
+        type=float,
+        default=30.0,
+        help="How often to check worker health in seconds",
+    )
     return parser.parse_args()
 
 
